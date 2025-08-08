@@ -46,6 +46,10 @@ pub const HTML: &str = r#"
     #history-table td.time { color: #888; font-family: 'Fira Mono', monospace; text-align: left; }
     a { color: #0074d9; text-decoration: none; }
     a:hover { text-decoration: underline; }
+    #instance-table { width: 320px; border-collapse: collapse; margin-top: 2rem; }
+    #instance-table th, #instance-table td { border: 1px solid #e0e0e0; padding: 0.4rem 0.7rem; text-align: left; }
+    #instance-table th { background: #f5f5f5; color: #0074d9; width: 160px; }
+    #instance-table td { background: #fff; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -90,6 +94,19 @@ pub const HTML: &str = r#"
         </tbody>
       </table>
     </div>
+    <div style="overflow-x:auto; margin-top:2rem;">
+      <h3>Instance information</h3>
+      <table id="instance-table">
+        <tbody id="instance-tbody">
+          <tr><th>redis_version</th><td>Loading...</td></tr>
+          <tr><th>process_id</th><td>Loading...</td></tr>
+          <tr><th>uptime_in_seconds</th><td>Loading...</td></tr>
+          <tr><th>uptime_in_days</th><td>Loading...</td></tr>
+          <tr><th>role</th><td>Loading...</td></tr>
+          <tr><th>connected_slaves</th><td>Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
   </main>
   <script>
     // EventSource for real-time updates
@@ -108,6 +125,16 @@ pub const HTML: &str = r#"
     const cpuUserData = [];
     const memoryUsedData = [];
     const memoryRssData = [];
+
+    // Instance info state
+    let instanceInfo = {
+      redis_version: '',
+      process_id: '',
+      uptime_in_seconds: '',
+      uptime_in_days: '',
+      role: '',
+      connected_slaves: ''
+    };
 
     // Format bytes to human-readable string
     function formatBytes(bytes) {
@@ -143,7 +170,7 @@ pub const HTML: &str = r#"
       return Math.trunc(Number(n));
     }
 
-    // Chart.js for cmd/s (y-axis: only multiples of 5, unique, integer, always show top label)
+    // Chart.js for cmd/s (y-axis: only multiples of 5, always show the top label)
     const commandsChart = new Chart(document.getElementById('commandsChart').getContext('2d'), {
       type: 'line',
       data: {
@@ -179,11 +206,11 @@ pub const HTML: &str = r#"
           x: { ticks: { color: '#222' } },
           y: { 
             beginAtZero: true,
+            min: 0,
             afterDataLimits: function(axis) {
-              // Always set axis.max to the nearest upper multiple of 5 if needed
               let max = Math.max(...commandsData.filter(v => typeof v === 'number' && !isNaN(v)), 0);
               let top = Math.ceil(max / 5) * 5;
-              axis.max = top;
+              axis.max = top < 5 ? 5 : top;
               axis.min = 0;
             },
             ticks: {
@@ -387,6 +414,23 @@ pub const HTML: &str = r#"
             <td>${formatNumber(r['mis/s'])}</td>
           </tr>`
         ).join('');
+
+        // Update instance info
+        instanceInfo.redis_version = data.redis_version ?? '';
+        instanceInfo.process_id = data.process_id ?? '';
+        instanceInfo.uptime_in_seconds = data.uptime_in_seconds ?? '';
+        instanceInfo.uptime_in_days = data.uptime_in_days ?? '';
+        instanceInfo.role = data.role ?? '';
+        instanceInfo.connected_slaves = data.connected_slaves ?? '';
+
+        document.getElementById('instance-tbody').innerHTML = `
+          <tr><th>redis_version</th><td>${instanceInfo.redis_version}</td></tr>
+          <tr><th>process_id</th><td>${instanceInfo.process_id}</td></tr>
+          <tr><th>uptime_in_seconds</th><td>${instanceInfo.uptime_in_seconds}</td></tr>
+          <tr><th>uptime_in_days</th><td>${instanceInfo.uptime_in_days}</td></tr>
+          <tr><th>role</th><td>${instanceInfo.role}</td></tr>
+          <tr><th>connected_slaves</th><td>${instanceInfo.connected_slaves}</td></tr>
+        `;
 
         // Update charts (use integer for cmd/s)
         labels.push(timeStr);
