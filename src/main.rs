@@ -1,5 +1,5 @@
 use axum::{
-    response::sse::{Event, Sse},
+    response::{sse::{Event, Sse}, Html},
     routing::get,
     Router,
 };
@@ -9,6 +9,7 @@ use std::{collections::HashMap, net::SocketAddr, sync::Mutex, time::Duration};
 use tokio::net::TcpListener;
 use tokio_stream::{wrappers::IntervalStream, StreamExt};
 use redis::Connection;
+use mellow::HTML;
 
 const URI: &str = "redis://127.0.0.1/";
 
@@ -91,9 +92,14 @@ async fn metrics_handler() -> String {
     String::from_utf8(buffer).unwrap()
 }
 
+async fn index_handler() -> Html<&'static str> {
+    Html(HTML)
+}
+
 #[tokio::main]
 async fn main() {
     let app: Router = Router::new()
+        .route("/", get(index_handler))
         .route("/events", get(sse_handler))
         .route("/metrics", get(metrics_handler));
 
