@@ -1,6 +1,6 @@
-# Mellow Redis Dashboard
+# Mellow
 
-A real-time dashboard for visualizing Redis metrics.  
+Mellow is a real-time dashboard for visualizing Redis metrics, which is inspired by [junegunn/redis-stat](https://github.com/junegunn/redis-stat).
 You can monitor command throughput, CPU, memory usage, and instance information with charts and tables.
 
 ## Screenshot
