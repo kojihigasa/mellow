@@ -74,12 +74,11 @@ pub const HTML: &str = r#"
             <th>time</th>
             <th>cpu_usr</th>
             <th>cpu_sys</th>
-            <th>clts_con</th>
-            <th>clts_blk</th>
+            <th>clients</th>
             <th>mem</th>
             <th>mem_rss</th>
-            <th>rej/s</th>
             <th>cmd/s</th>
+            <th>rej/s</th>
             <th>exp/s</th>
             <th>evt/s</th>
             <th>hit/s</th>
@@ -87,21 +86,22 @@ pub const HTML: &str = r#"
           </tr>
         </thead>
         <tbody id="history-tbody">
-          <tr><td colspan="13">Loading...</td></tr>
+          <tr><td colspan="12">Loading...</td></tr>
         </tbody>
       </table>
     </div>
   </main>
   <script>
+    // EventSource for real-time updates
     const evtSource = new EventSource('/events');
     const historyTbody = document.getElementById('history-tbody');
 
-    // Data for history table (max 5 rows)
+    // History table data (max 5 rows)
     const history = [];
     let prev = null;
     let prevTime = null;
 
-    // Data for charts (1 hour = 1800 points if 2s interval)
+    // Chart data (1 hour = 1800 points if 2s interval)
     const labels = [];
     const commandsData = [];
     const cpuSysData = [];
@@ -109,7 +109,7 @@ pub const HTML: &str = r#"
     const memoryUsedData = [];
     const memoryRssData = [];
 
-    // Unit conversion functions
+    // Format bytes to human-readable string
     function formatBytes(bytes) {
       if (bytes === '' || bytes == null || isNaN(bytes)) return '';
       bytes = Number(bytes);
@@ -118,6 +118,7 @@ pub const HTML: &str = r#"
       if (bytes >= 1 << 10) return (bytes / (1 << 10)).toFixed(2) + ' KB';
       return bytes + ' B';
     }
+    // Format numbers with K/M/G suffix
     function formatNumber(n) {
       if (n === '' || n == null || isNaN(n)) return '';
       n = Number(n);
@@ -126,15 +127,23 @@ pub const HTML: &str = r#"
       if (n >= 1e3) return (n / 1e3).toFixed(2) + ' K';
       return n;
     }
-
-    function calcPerSec(curr, prev, currTime, prevTime) {
-      if (prev == null || curr == null || prevTime == null) return '';
-      const dt = (currTime - prevTime) / 1000;
-      if (dt <= 0) return '';
-      return ((curr - prev) / dt).toFixed(2);
+    // Truncate to 2 decimal places, always show 2 digits
+    function truncate2(n) {
+      if (n === '' || n == null || isNaN(n)) return '';
+      return (Math.floor(Number(n) * 100) / 100).toFixed(2);
+    }
+    // Difference between current and previous value
+    function diff(curr, prev) {
+      if (prev == null || curr == null) return '';
+      return Number(curr) - Number(prev);
+    }
+    // Convert to integer (for chart and table)
+    function toInt(n) {
+      if (n === '' || n == null || isNaN(n)) return null;
+      return Math.trunc(Number(n));
     }
 
-    // Chart.js options for smooth line, no points, and filled area
+    // Chart.js for cmd/s (y-axis: only multiples of 5, unique, integer, always show top label)
     const commandsChart = new Chart(document.getElementById('commandsChart').getContext('2d'), {
       type: 'line',
       data: {
@@ -169,15 +178,38 @@ pub const HTML: &str = r#"
         scales: {
           x: { ticks: { color: '#222' } },
           y: { 
-            ticks: { 
+            beginAtZero: true,
+            afterDataLimits: function(axis) {
+              // Always set axis.max to the nearest upper multiple of 5 if needed
+              let max = Math.max(...commandsData.filter(v => typeof v === 'number' && !isNaN(v)), 0);
+              let top = Math.ceil(max / 5) * 5;
+              axis.max = top;
+              axis.min = 0;
+            },
+            ticks: {
               color: '#222',
-              callback: formatNumber
+              stepSize: 5,
+              callback: function(value, index, ticks) {
+                // Always show the top tick label
+                const maxTick = ticks[ticks.length - 1]?.value;
+                if (value === maxTick) {
+                  return value;
+                }
+                // Show only multiples of 5, unique, integer
+                if (value % 5 !== 0) return '';
+                value = Math.trunc(value);
+                if (index === 0 || value !== Math.trunc(ticks[index - 1].value)) {
+                  return value;
+                }
+                return '';
+              }
             }
           }
         }
       }
     });
 
+    // Chart.js for cpu (y-axis: only multiples of 5, unique, integer, start at 0)
     const cpuChart = new Chart(document.getElementById('cpuChart').getContext('2d'), {
       type: 'line',
       data: {
@@ -222,11 +254,27 @@ pub const HTML: &str = r#"
         },
         scales: {
           x: { ticks: { color: '#222' } },
-          y: { ticks: { color: '#222' } }
+          y: { 
+            beginAtZero: true,
+            ticks: {
+              color: '#222',
+              stepSize: 5,
+              callback: function(value, index, ticks) {
+                // Show only multiples of 5, unique, integer
+                if (value % 5 !== 0) return '';
+                value = Math.trunc(value);
+                if (index === 0 || value !== Math.trunc(ticks[index - 1].value)) {
+                  return value;
+                }
+                return '';
+              }
+            }
+          }
         }
       }
     });
 
+    // Chart.js for memory (y-axis: default Chart.js ticks, just format as bytes)
     const memoryChart = new Chart(document.getElementById('memoryChart').getContext('2d'), {
       type: 'line',
       data: {
@@ -272,15 +320,20 @@ pub const HTML: &str = r#"
         scales: {
           x: { ticks: { color: '#222' } },
           y: { 
-            ticks: { 
+            beginAtZero: true,
+            min: 0,
+            ticks: {
               color: '#222',
-              callback: function(value) { return formatBytes(value); }
+              callback: function(value) {
+                return formatBytes(value);
+              }
             }
           }
         }
       }
     });
 
+    // Handle SSE events and update table/charts
     evtSource.onmessage = function(event) {
       try {
         const data = JSON.parse(event.data);
@@ -288,32 +341,31 @@ pub const HTML: &str = r#"
         const nowMs = now.getTime();
         const timeStr = now.toLocaleTimeString();
 
-        // Calculate per second values using diffs
+        // Calculate difference values using previous data
         let cmd_s = '', exp_s = '', evt_s = '', hit_s = '', mis_s = '', rej_s = '';
         if (prev) {
-          cmd_s = calcPerSec(data.total_commands_processed, prev.total_commands_processed, nowMs, prevTime);
-          exp_s = calcPerSec(data.expired_keys, prev.expired_keys, nowMs, prevTime);
-          evt_s = calcPerSec(data.evicted_keys, prev.evicted_keys, nowMs, prevTime);
-          hit_s = calcPerSec(data.keyspace_hits, prev.keyspace_hits, nowMs, prevTime);
-          mis_s = calcPerSec(data.keyspace_misses, prev.keyspace_misses, nowMs, prevTime);
-          rej_s = calcPerSec(data.rejected_connections, prev.rejected_connections, nowMs, prevTime);
+          cmd_s = diff(data.total_commands_processed, prev.total_commands_processed);
+          exp_s = diff(data.expired_keys, prev.expired_keys);
+          evt_s = diff(data.evicted_keys, prev.evicted_keys);
+          hit_s = diff(data.keyspace_hits, prev.keyspace_hits);
+          mis_s = diff(data.keyspace_misses, prev.keyspace_misses);
+          rej_s = diff(data.rejected_connections, prev.rejected_connections);
         }
 
         // Prepare row for table
         const row = {
           time: timeStr,
-          cpu_usr: data.used_cpu_user !== undefined ? data.used_cpu_user : '',
-          cpu_sys: data.used_cpu_sys !== undefined ? data.used_cpu_sys : '',
-          clts_con: data.connected_clients ?? '',
-          clts_blk: data.blocked_clients ?? '',
+          cpu_usr: data.used_cpu_user !== undefined ? truncate2(data.used_cpu_user) : '',
+          cpu_sys: data.used_cpu_sys !== undefined ? truncate2(data.used_cpu_sys) : '',
+          clients: data.connected_clients ?? '',
           mem: data.used_memory ?? '',
           mem_rss: data.used_memory_rss ?? '',
-          'rej/s': rej_s,
-          'cmd/s': cmd_s,
-          'exp/s': exp_s,
-          'evt/s': evt_s,
-          'hit/s': hit_s,
-          'mis/s': mis_s
+          'cmd/s': toInt(cmd_s),
+          'rej/s': toInt(rej_s),
+          'exp/s': toInt(exp_s),
+          'evt/s': toInt(evt_s),
+          'hit/s': toInt(hit_s),
+          'mis/s': toInt(mis_s)
         };
 
         history.unshift(row);
@@ -324,12 +376,11 @@ pub const HTML: &str = r#"
             <td class="time">${r.time}</td>
             <td>${r.cpu_usr}</td>
             <td>${r.cpu_sys}</td>
-            <td>${formatNumber(r.clts_con)}</td>
-            <td>${formatNumber(r.clts_blk)}</td>
+            <td>${formatNumber(r.clients)}</td>
             <td>${formatBytes(r.mem)}</td>
             <td>${formatBytes(r.mem_rss)}</td>
-            <td>${formatNumber(r['rej/s'])}</td>
             <td>${formatNumber(r['cmd/s'])}</td>
+            <td>${formatNumber(r['rej/s'])}</td>
             <td>${formatNumber(r['exp/s'])}</td>
             <td>${formatNumber(r['evt/s'])}</td>
             <td>${formatNumber(r['hit/s'])}</td>
@@ -337,9 +388,9 @@ pub const HTML: &str = r#"
           </tr>`
         ).join('');
 
-        // Update charts (use per second value for cmd/s)
+        // Update charts (use integer for cmd/s)
         labels.push(timeStr);
-        commandsData.push(Number(cmd_s) || null);
+        commandsData.push(toInt(cmd_s));
         cpuSysData.push(Number(row.cpu_sys) || null);
         cpuUserData.push(Number(row.cpu_usr) || null);
         memoryUsedData.push(Number(row.mem) || null);
@@ -361,11 +412,11 @@ pub const HTML: &str = r#"
         prevTime = nowMs;
 
       } catch (e) {
-        historyTbody.innerHTML = `<tr><td colspan="13">Data fetch error</td></tr>`;
+        historyTbody.innerHTML = `<tr><td colspan="12">Data fetch error</td></tr>`;
       }
     };
     evtSource.onerror = function() {
-      historyTbody.innerHTML = `<tr><td colspan="13">Connection to server lost.</td></tr>`;
+      historyTbody.innerHTML = `<tr><td colspan="12">Connection to server lost.</td></tr>`;
     };
   </script>
 </body>

@@ -70,7 +70,7 @@ fn update_gauges_from_info(map: &HashMap<String, String>) {
 }
 
 async fn sse_handler() -> Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>> {
-    let stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(2)))
+    let stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(1)))
         .map(|_| {
             let mut con: Connection = setup_redis_client(URI);
             let info: String = get_redis_info(&mut con);
