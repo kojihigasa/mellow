@@ -12,7 +12,7 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 use tokio_stream::{wrappers::IntervalStream, StreamExt};
 use redis::{Client, Connection};
-use mellow::{ROOT_HTML, CLUSTER_HTML};
+use mellow::{INDEX_HTML, CLUSTER_HTML};
 
 const CONFIG_PATH: &str = "mellow-config.json";
 
@@ -234,7 +234,7 @@ async fn sse_handler(
 }
 
 async fn index_handler() -> Html<&'static str> {
-    Html(ROOT_HTML)
+    Html(INDEX_HTML)
 }
 
 async fn clusters_json_handler(
