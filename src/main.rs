@@ -1,29 +1,65 @@
 use axum::{
+    extract::{Path, State},
     response::{sse::{Event, Sse}, Html},
     routing::get,
     Router,
 };
+use core::panic;
 use lazy_static::lazy_static;
 use prometheus::{Encoder, Gauge, TextEncoder, Registry};
-use std::{collections::HashMap, net::SocketAddr, sync::Mutex, time::Duration};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Duration
+};
 use tokio::net::TcpListener;
 use tokio_stream::{wrappers::IntervalStream, StreamExt};
-use redis::Connection;
-use mellow::HTML;
+use redis::{Client, Connection};
+use mellow::{ROOT_HTML, CLUSTER_HTML};
 
-const URI: &str = "redis://127.0.0.1/";
+const CONFIG_PATH: &str = "mellow-config.json";
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct RedisInstance {
+    host: String,
+    port: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct RedisCluster {
+    name: String,
+    instances: Vec<RedisInstance>,
+    password: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct RedisConfig {
+    clusters: Vec<RedisCluster>,
+}
+
+type AppState = Arc<RedisConfig>;
 
 lazy_static! {
     static ref REGISTRY: Registry = Registry::new();
     static ref GAUGES: Mutex<HashMap<String, Gauge>> = Mutex::new(HashMap::new());
 }
 
-fn setup_redis_client(uri: &str) -> Connection {
-    let con: Connection = redis::Client::open(uri)
-        .expect("Failed to create Redis client")
-        .get_connection()
-        .expect("Failed to connect to Redis");
-    con
+fn setup_redis_client(cluster: &RedisCluster) -> Connection {
+    for instance in &cluster.instances {
+        let uri: String = if cluster.password.is_empty() {
+            format!("redis://{}:{}", instance.host, instance.port)
+        } else {
+            format!("redis://default:{}@{}:{}", cluster.password, instance.host, instance.port)
+        };
+        if let Ok(client) = Client::open(uri) {
+            if let Ok(con) = client.get_connection() {
+                return con;
+            }
+        }
+    }
+    panic!("Failed to connect to any Redis instance in the cluster {}", cluster.name);
 }
 
 fn get_redis_info(con: &mut Connection) -> String {
@@ -69,10 +105,17 @@ fn update_gauges_from_info(map: &HashMap<String, String>) {
     }
 }
 
-async fn sse_handler() -> Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>> {
+async fn sse_handler(
+    Path(name): Path<String>,
+    State(config): State<AppState>
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>> {
+    let cluster = config.clusters.iter()
+        .find(|c| c.name == name)
+        .expect(&format!("Cluster {} not found", name))
+        .clone();
     let stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(1)))
-        .map(|_| {
-            let mut con: Connection = setup_redis_client(URI);
+        .map(move |_| {
+            let mut con: Connection = setup_redis_client(&cluster);
             let info: String = get_redis_info(&mut con);
             let info_map: HashMap<String, String> = parse_redis_info(&info);
             let info_json: String = get_json_from_info(&info_map);
@@ -81,27 +124,53 @@ async fn sse_handler() -> Sse<impl tokio_stream::Stream<Item = Result<Event, axu
     Sse::new(stream)
 }
 
-async fn metrics_handler() -> String {
-    let mut con: Connection = setup_redis_client(URI);
+async fn metrics_handler(
+    Path(name): Path<String>,
+    State(config): State<AppState>
+) -> String {
+    let cluster = config.clusters.iter()
+        .find(|c| c.name == name)
+        .expect(&format!("Cluster {} not found", name));
+    let mut con: Connection = setup_redis_client(cluster);
     let info: String = get_redis_info(&mut con);
     let info_map: HashMap<String, String> = parse_redis_info(&info);
     update_gauges_from_info(&info_map);
     let encoder = TextEncoder::new();
     let mut buffer = Vec::new();
-    encoder.encode(&REGISTRY.gather(), &mut buffer).unwrap();
-    String::from_utf8(buffer).unwrap()
+    encoder.encode(&REGISTRY.gather(), &mut buffer)
+        .expect("Failed to encode metrics");
+    String::from_utf8(buffer)
+        .expect("Failed to convert metrics to String")
 }
 
 async fn index_handler() -> Html<&'static str> {
-    Html(HTML)
+    Html(ROOT_HTML)
+}
+
+async fn named_index_handler(
+    Path(name): Path<String>
+) -> Html<String> {
+    let html = format!(
+        r#"<script>window.CLUSTER_NAME = "{}";</script>{}"#,
+        name, CLUSTER_HTML
+    );
+    Html(html)
 }
 
 #[tokio::main]
 async fn main() {
+    let config_data: String = std::fs::read_to_string(CONFIG_PATH)
+        .expect("Failed to read config file");
+    let redis_config: RedisConfig = serde_json::from_str(&config_data)
+        .expect("Failed to parse config file");
+    let shared_config: Arc<RedisConfig> = Arc::new(redis_config);
+
     let app: Router = Router::new()
         .route("/", get(index_handler))
-        .route("/events", get(sse_handler))
-        .route("/metrics", get(metrics_handler));
+        .route("/:name", get(named_index_handler))
+        .route("/:name/events", get(sse_handler))
+        .route("/:name/metrics", get(metrics_handler))
+        .with_state(shared_config);
 
     let addr: SocketAddr = SocketAddr::from(([127, 0, 0, 1], 8080));
     println!("Listening on http://{}", addr);

@@ -1,4 +1,10 @@
-pub const HTML: &str = r#"
+pub const ROOT_HTML: &str = r#"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+"#;
+
+pub const CLUSTER_HTML: &str = r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -110,7 +116,7 @@ pub const HTML: &str = r#"
   </main>
   <script>
     // EventSource for real-time updates
-    const evtSource = new EventSource('/events');
+    const evtSource = new EventSource(`/${window.CLUSTER_NAME}/events`);
     const historyTbody = document.getElementById('history-tbody');
 
     // History table data (max 5 rows)
