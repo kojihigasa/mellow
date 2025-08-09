@@ -2,6 +2,79 @@ pub const ROOT_HTML: &str = r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta charset="UTF-8">
+  <title>Mellow Redis Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; background: #f8fafc; color: #222; margin: 0; }
+    header { background: #f5f5f5; padding: 1rem 2rem; font-size: 1.5rem; border-bottom: 1px solid #eee; position: relative; }
+    .home-link {
+      color: #222;
+      text-decoration: none;
+    }
+    .home-link:hover {
+      text-decoration: none;
+    }
+    .metrics-link {
+      position: absolute;
+      right: 2rem;
+      top: 1.2rem;
+      font-size: 1rem;
+      color: #fff;
+      background: #005fa3;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .metrics-link:hover {
+      background: #003f6b;
+    }
+    main { max-width: 800px; margin: 2rem auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px #0001; padding: 2rem; }
+    h2 { color: #0074d9; }
+    ul { list-style: none; padding: 0; }
+    li { margin: 1rem 0; }
+    a.cluster-link {
+      display: block;
+      padding: 1rem 1.5rem;
+      background: #f5faff;
+      border-radius: 8px;
+      color: #0074d9;
+      font-size: 1.2rem;
+      font-weight: 500;
+      text-decoration: none;
+      box-shadow: 0 2px 8px #0074d911;
+      transition: background 0.2s, box-shadow 0.2s;
+    }
+    a.cluster-link:hover {
+      background: #e0f0ff;
+      box-shadow: 0 4px 16px #0074d922;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="home-link" href="/">Mellow Redis Dashboard</a>
+  </header>
+  <main>
+    <h2>Redis Clusters</h2>
+    <ul id="cluster-list"></ul>
+  </main>
+  <script>
+    // Generate cluster links
+    fetch('/clusters.json')
+      .then(res => res.json())
+      .then(data => {
+        const ul = document.getElementById('cluster-list');
+        data.clusters.forEach(cluster => {
+          const li = document.createElement('li');
+          li.innerHTML = `<a class="cluster-link" href="/${cluster.name}">${cluster.name}</a>`;
+          ul.appendChild(li);
+        });
+      });
+  </script>
+</body>
+</html>
 "#;
 
 pub const CLUSTER_HTML: &str = r#"
@@ -14,6 +87,13 @@ pub const CLUSTER_HTML: &str = r#"
   <style>
     body { font-family: 'Segoe UI', sans-serif; background: #fff; color: #222; margin: 0; }
     header { background: #f5f5f5; padding: 1rem 2rem; font-size: 1.5rem; border-bottom: 1px solid #eee; position: relative; }
+    .home-link {
+      color: #222;
+      text-decoration: none;
+    }
+    .home-link:hover {
+      text-decoration: none;
+    }
     .metrics-link {
       position: absolute;
       right: 2rem;
@@ -61,8 +141,8 @@ pub const CLUSTER_HTML: &str = r#"
 </head>
 <body>
   <header>
-    Mellow Redis Dashboard
-    <a class="metrics-link" href="/metrics" target="_blank">Prometheus Metrics</a>
+    <a class="home-link" href="/">Mellow Redis Dashboard</a>
+    <a class="metrics-link" id="metrics-link" href="to_be_replaced" target="_blank">Prometheus Metrics</a>
   </header>
   <main>
     <h2>Redis Metrics</h2>
@@ -115,6 +195,12 @@ pub const CLUSTER_HTML: &str = r#"
     </div>
   </main>
   <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      if (window.CLUSTER_NAME) {
+        document.getElementById('metrics-link').href = `/${window.CLUSTER_NAME}/metrics`;
+      }
+    });
+
     // EventSource for real-time updates
     const evtSource = new EventSource(`/${window.CLUSTER_NAME}/events`);
     const historyTbody = document.getElementById('history-tbody');

@@ -1,5 +1,6 @@
 use axum::{
     extract::{Path, State},
+    Json,
     response::{sse::{Event, Sse}, Html},
     routing::get,
     Router,
@@ -9,10 +10,7 @@ use lazy_static::lazy_static;
 use prometheus::{Encoder, Gauge, TextEncoder, Registry};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-    time::Duration
+    collections::HashMap, net::SocketAddr, sync::{Arc, Mutex}, time::Duration
 };
 use tokio::net::TcpListener;
 use tokio_stream::{wrappers::IntervalStream, StreamExt};
@@ -147,10 +145,24 @@ async fn index_handler() -> Html<&'static str> {
     Html(ROOT_HTML)
 }
 
+async fn clusters_json_handler(
+    State(config): State<AppState>
+) -> Json<serde_json::Value> {
+    let mut names : Vec<String> = config.clusters.iter()
+        .map(|c| c.name.clone())
+        .collect();
+    names.sort();
+    let clusters: Vec<serde_json::Value> = names
+        .into_iter()
+        .map(|name| serde_json::json!({ "name": name }))
+        .collect();
+    Json(serde_json::json!({ "clusters": clusters }))
+}
+
 async fn named_index_handler(
     Path(name): Path<String>
 ) -> Html<String> {
-    let html = format!(
+    let html: String = format!(
         r#"<script>window.CLUSTER_NAME = "{}";</script>{}"#,
         name, CLUSTER_HTML
     );
@@ -167,6 +179,7 @@ async fn main() {
 
     let app: Router = Router::new()
         .route("/", get(index_handler))
+        .route("/clusters.json", get(clusters_json_handler))
         .route("/:name", get(named_index_handler))
         .route("/:name/events", get(sse_handler))
         .route("/:name/metrics", get(metrics_handler))
