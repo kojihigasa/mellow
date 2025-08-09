@@ -6,11 +6,6 @@ use axum::{
     Router,
 };
 use core::panic;
-/*
-use lazy_static::lazy_static;
-use prometheus::{Encoder, Gauge, TextEncoder, Registry};
-use std::sync::Mutex;
-*/
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
@@ -40,13 +35,6 @@ struct RedisConfig {
 }
 
 type AppState = Arc<RedisConfig>;
-
-/*
-lazy_static! {
-    static ref REGISTRY: Registry = Registry::new();
-    static ref GAUGES: Mutex<HashMap<String, Gauge>> = Mutex::new(HashMap::new());
-}
-*/
 
 fn setup_redis_client(cluster: &RedisCluster) -> Connection {
     for instance in &cluster.instances {
@@ -79,27 +67,6 @@ fn parse_redis_info(info: &str) -> HashMap<String, String> {
     }
     map
 }
-
-/*
-fn update_gauges_from_info(map: &HashMap<String, String>) {
-    let mut gauges = GAUGES.lock()
-        .expect("Failed to lock GAUGES");
-    for (key, value) in map {
-        if let Ok(val) = value.parse::<f64>() {
-            if let Some(gauge) = gauges.get(key) {
-                gauge.set(val);
-            } else {
-                let gauge = Gauge::new(key, "Redis metric")
-                    .expect("Failed to create gauge");
-                gauge.set(val);
-                REGISTRY.register(Box::new(gauge.clone()))
-                    .expect("Failed to register gauge");
-                gauges.insert(key.clone(), gauge);
-            }
-        }
-    }
-}
-*/
 
 fn get_replicas(info_map: &HashMap<String, String>) -> Vec<(String, String)> {
     let mut replicas: Vec<(String, String)> = Vec::new();
@@ -265,34 +232,6 @@ async fn sse_handler(
         });
     Sse::new(stream)
 }
-
-/* Prometheus Metrics has been abolished. But, the code was left just for reference.
-async fn metrics_handler(
-    Path(name): Path<String>,
-    State(config): State<AppState>
-) -> String {
-    let config = config.clone();
-    let name = name.clone();
-    let mut metrics_info: Vec<HashMap<String, String>> = Vec::new();
-    generics_handler(
-        name,
-        &config,
-        |_, info_map, ip| {
-            update_gauges_from_info(info_map);
-            let mut node_info = info_map.clone();
-            node_info.insert("ip".to_string(), ip.to_string());
-            metrics_info.push(node_info);
-            ()
-        },
-    );
-    let encoder = TextEncoder::new();
-    let mut buffer = Vec::new();
-    encoder.encode(&REGISTRY.gather(), &mut buffer)
-        .expect("Failed to encode metrics");
-    String::from_utf8(buffer)
-        .expect("Failed to convert metrics to String")
-}
-*/
 
 async fn index_handler() -> Html<&'static str> {
     Html(ROOT_HTML)
