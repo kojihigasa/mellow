@@ -173,12 +173,6 @@ pub const CLUSTER_HTML: &str = r#"
     </div>
   </main>
   <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      if (window.CLUSTER_NAME) {
-        document.getElementById('metrics-link').href = `/${window.CLUSTER_NAME}/metrics`;
-      }
-    });
-
     // EventSource for real-time updates
     const evtSource = new EventSource(`/${window.CLUSTER_NAME}/events`);
     const historyTbody = document.getElementById('history-tbody');
@@ -536,4 +530,3 @@ pub const CLUSTER_HTML: &str = r#"
 </body>
 </html>
 "#;
-
