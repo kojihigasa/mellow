@@ -15,21 +15,6 @@ pub const ROOT_HTML: &str = r#"
     .home-link:hover {
       text-decoration: none;
     }
-    .metrics-link {
-      position: absolute;
-      right: 2rem;
-      top: 1.2rem;
-      font-size: 1rem;
-      color: #fff;
-      background: #005fa3;
-      padding: 0.4rem 1rem;
-      border-radius: 6px;
-      text-decoration: none;
-      transition: background 0.2s;
-    }
-    .metrics-link:hover {
-      background: #003f6b;
-    }
     main { max-width: 800px; margin: 2rem auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px #0001; padding: 2rem; }
     h2 { color: #0074d9; }
     ul { list-style: none; padding: 0; }
@@ -61,7 +46,7 @@ pub const ROOT_HTML: &str = r#"
     <ul id="cluster-list"></ul>
   </main>
   <script>
-    // Generate cluster links
+    // Fetch cluster list and generate links
     fetch('/clusters.json')
       .then(res => res.json())
       .then(data => {
@@ -93,12 +78,6 @@ pub const CLUSTER_HTML: &str = r#"
     }
     .home-link:hover {
       text-decoration: none;
-    }
-    .metrics-link {
-      position: absolute;
-      right: 2rem;
-      top: 1.2rem;
-      font-size: 1rem;
     }
     main { max-width: 1200px; margin: 2rem auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px #0001; padding: 2rem; }
     h2 { color: #0074d9; }
@@ -142,7 +121,6 @@ pub const CLUSTER_HTML: &str = r#"
 <body>
   <header>
     <a class="home-link" href="/">Mellow Redis Dashboard</a>
-    <a class="metrics-link" id="metrics-link" href="to_be_replaced" target="_blank">Prometheus Metrics</a>
   </header>
   <main>
     <h2>Redis Metrics</h2>
@@ -558,3 +536,4 @@ pub const CLUSTER_HTML: &str = r#"
 </body>
 </html>
 "#;
+

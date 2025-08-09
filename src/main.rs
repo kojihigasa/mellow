@@ -274,7 +274,6 @@ async fn main() {
         .route("/clusters.json", get(clusters_json_handler))
         .route("/:name", get(named_index_handler))
         .route("/:name/events", get(sse_handler))
-        //.route("/:name/metrics", get(metrics_handler))
         .with_state(shared_config);
 
     let addr: SocketAddr = SocketAddr::from(([127, 0, 0, 1], 8080));
