@@ -4,18 +4,22 @@
             "name": "standalone1",
             "instances": [
                 {
-                    "host": "localhost",
+                    "ip": "127.0.0.1",
                     "port": "6379"
                 }
             ],
             "password": ""
         },
         {
-            "name": "sentinel1",
+            "name": "standalone2",
             "instances": [
                 {
-                    "host": "localhost",
-                    "port": "26379"
+                    "ip": "127.0.0.1",
+                    "port": "6479"
+                },
+                {
+                    "ip": "127.0.0.1",
+                    "port": "6480"
                 }
             ],
             "password": ""
@@ -24,8 +28,28 @@
             "name": "cluster1",
             "instances": [
                 {
-                    "host": "localhost",
+                    "ip": "127.0.0.1",
                     "port": "6579"
+                },
+                {
+                    "ip": "127.0.0.1",
+                    "port": "6580"
+                },
+                {
+                    "ip": "127.0.0.1",
+                    "port": "6581"
+                },
+                {
+                    "ip": "127.0.0.1",
+                    "port": "6582"
+                },
+                {
+                    "ip": "127.0.0.1",
+                    "port": "6583"
+                },
+                {
+                    "ip": "127.0.0.1",
+                    "port": "6584"
                 }
             ],
             "password": ""
