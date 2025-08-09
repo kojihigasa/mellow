@@ -6,13 +6,14 @@ use axum::{
     Router,
 };
 use core::panic;
+/*
 use lazy_static::lazy_static;
 use prometheus::{Encoder, Gauge, TextEncoder, Registry};
+use std::sync::Mutex;
+*/
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{
-    collections::HashMap, net::SocketAddr, sync::{Arc, Mutex}, time::Duration
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 use tokio_stream::{wrappers::IntervalStream, StreamExt};
 use redis::{Client, Connection};
@@ -40,10 +41,12 @@ struct RedisConfig {
 
 type AppState = Arc<RedisConfig>;
 
+/*
 lazy_static! {
     static ref REGISTRY: Registry = Registry::new();
     static ref GAUGES: Mutex<HashMap<String, Gauge>> = Mutex::new(HashMap::new());
 }
+*/
 
 fn setup_redis_client(cluster: &RedisCluster) -> Connection {
     for instance in &cluster.instances {
@@ -77,6 +80,7 @@ fn parse_redis_info(info: &str) -> HashMap<String, String> {
     map
 }
 
+/*
 fn update_gauges_from_info(map: &HashMap<String, String>) {
     let mut gauges = GAUGES.lock()
         .expect("Failed to lock GAUGES");
@@ -95,6 +99,7 @@ fn update_gauges_from_info(map: &HashMap<String, String>) {
         }
     }
 }
+*/
 
 fn get_replicas(info_map: &HashMap<String, String>) -> Vec<(String, String)> {
     let mut replicas: Vec<(String, String)> = Vec::new();
@@ -145,11 +150,80 @@ fn get_cluster_masters(con: &mut Connection) -> Vec<(String, String)> {
     masters
 }
 
-fn collect_replica_info(
+fn generics_handler<F, R>(
+    name: String,
+    config: &RedisConfig,
+    mut node_callback: F,
+) -> R
+where
+    F: FnMut(&RedisCluster, &HashMap<String, String>, &str) -> R,
+    R: Default + Clone,
+{
+    let cluster = config.clusters.iter()
+        .find(|c| c.name == name)
+        .expect(&format!("Cluster {} not found", name))
+        .clone();
+
+    let mut con: Connection = setup_redis_client(&cluster);
+    let info: String = get_redis_info(&mut con);
+    let info_map: HashMap<String, String> = parse_redis_info(&info);
+
+    let cluster_enabled: bool = info_map.get("cluster_enabled")
+        .map(|v| v == "1").unwrap_or(false);
+
+    let mut result = R::default();
+
+    if cluster_enabled {
+        for (ip, port) in get_cluster_masters(&mut con) {
+            let master_cluster = RedisCluster {
+                name: cluster.name.clone(),
+                instances: vec![RedisInstance { ip: ip.clone(), port: port.clone() }],
+                password: cluster.password.clone(),
+            };
+            if let Ok(mut master_con) = std::panic::catch_unwind(|| setup_redis_client(&master_cluster)) {
+                let master_info: String = get_redis_info(&mut master_con);
+                let master_info_map: HashMap<String, String> = parse_redis_info(&master_info);
+                result = node_callback(&master_cluster, &master_info_map, &ip);
+                collect_replica_info_callback(&master_cluster, &master_info_map, &mut node_callback);
+            }
+        }
+    } else {
+        let role: &str = info_map.get("role").map(|v| v.as_str()).unwrap();
+        if role == "master" {
+            let ip: String = cluster.instances[0].ip.clone();
+            result = node_callback(&cluster, &info_map, &ip);
+            collect_replica_info_callback(&cluster, &info_map, &mut node_callback);
+        } else if role == "slave" {
+            let master_ip: String = info_map.get("master_host")
+                .cloned().unwrap_or_default();
+            let master_port: String = info_map.get("master_port")
+                .cloned().unwrap_or_default();
+            if !master_ip.is_empty() && !master_port.is_empty() {
+                let master_cluster = RedisCluster {
+                    name: cluster.name.clone(),
+                    instances: vec![RedisInstance { ip: master_ip.clone(), port: master_port.clone() }],
+                    password: cluster.password.clone(),
+                };
+                if let Ok(mut master_con) = std::panic::catch_unwind(|| setup_redis_client(&master_cluster)) {
+                    let master_info: String = get_redis_info(&mut master_con);
+                    let master_info_map: HashMap<String, String> = parse_redis_info(&master_info);
+                    result = node_callback(&master_cluster, &master_info_map, &master_ip);
+                    collect_replica_info_callback(&master_cluster, &master_info_map, &mut node_callback);
+                }
+            }
+        }
+    }
+    result
+}
+
+fn collect_replica_info_callback<F, R>(
     cluster: &RedisCluster,
     info_map: &HashMap<String, String>,
-    data: &mut Vec<serde_json::Value>
-) {
+    node_callback: &mut F,
+) where
+    F: FnMut(&RedisCluster, &HashMap<String, String>, &str) -> R,
+    R: Default + Clone,
+{
     if info_map.get("connected_slaves")
         .and_then(|v| v.parse::<u32>().ok()) > Some(0) {
         for (rip, rport) in get_replicas(info_map) {
@@ -161,11 +235,7 @@ fn collect_replica_info(
             if let Ok(mut replica_con) = std::panic::catch_unwind(|| setup_redis_client(&replica_cluster)) {
                 let replica_info: String = get_redis_info(&mut replica_con);
                 let replica_info_map: HashMap<String, String> = parse_redis_info(&replica_info);
-                data.push(json!({
-                    "ip": rip,
-                    "port": rport,
-                    "info": replica_info_map,
-                }));
+                node_callback(&replica_cluster, &replica_info_map, &rip);
             }
         }
     }
@@ -175,93 +245,46 @@ async fn sse_handler(
     Path(name): Path<String>,
     State(config): State<AppState>
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>> {
-    let cluster = config.clusters.iter()
-        .find(|c| c.name == name)
-        .expect(&format!("Cluster {} not found", name))
-        .clone();
-
+    let config = config.clone();
+    let name = name.clone();
     let stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(1)))
         .map(move |_| {
-            let mut data = Vec::new();
-
-            let mut con: Connection = setup_redis_client(&cluster);
-            let info: String = get_redis_info(&mut con);
-            let info_map: HashMap<String, String> = parse_redis_info(&info);
-
-            let cluster_enabled: bool = info_map.get("cluster_enabled")
-                .map(|v| v == "1").unwrap_or(false);
-
-            if cluster_enabled {
-                for (ip, port) in get_cluster_masters(&mut con) {
-                    let master_cluster = RedisCluster {
-                        name: cluster.name.clone(),
-                        instances: vec![RedisInstance { ip: ip.clone(), port: port.clone() }],
-                        password: cluster.password.clone(),
-                    };
-                    if let Ok(mut master_con) = std::panic::catch_unwind(|| setup_redis_client(&master_cluster)) {
-                        let master_info: String = get_redis_info(&mut master_con);
-                        let master_info_map: HashMap<String, String> = parse_redis_info(&master_info);
-                        data.push(json!({
-                            "ip": ip,
-                            "port": port,
-                            "info": master_info_map,
-                        }));
-                        collect_replica_info(&master_cluster, &master_info_map, &mut data);
-                    }
-                }
-            } else {
-                let role: &str = info_map.get("role").map(|v| v.as_str()).unwrap();
-                if role == "master" {
-                    let ip: String = cluster.instances[0].ip.clone();
-                    let port: String = cluster.instances[0].port.clone();
-                    data.push(json!({
-                        "ip": ip,
-                        "port": port,
-                        "info": info_map,
-                    }));
-                    collect_replica_info(&cluster, &info_map, &mut data);
-                } else if role == "slave" {
-                    let master_ip: String = info_map.get("master_host")
-                        .cloned().unwrap_or_default();
-                    let master_port: String = info_map.get("master_port")
-                        .cloned().unwrap_or_default();
-                    if !master_ip.is_empty() && !master_port.is_empty() {
-                        let master_cluster = RedisCluster {
-                            name: cluster.name.clone(),
-                            instances: vec![RedisInstance { ip: master_ip.clone(), port: master_port.clone() }],
-                            password: cluster.password.clone(),
-                        };
-                        if let Ok(mut master_con) = std::panic::catch_unwind(|| setup_redis_client(&master_cluster)) {
-                            let master_info: String = get_redis_info(&mut master_con);
-                            let master_info_map: HashMap<String, String> = parse_redis_info(&master_info);
-                            data.push(json!({
-                                "ip": master_ip,
-                                "port": master_port,
-                                "info": master_info_map,
-                            }));
-                            collect_replica_info(&master_cluster, &master_info_map, &mut data);
-                        }
-                    }
-                }
-            }
-
+            let mut data: Vec<HashMap<String, String>> = Vec::new();
+            generics_handler(
+                name.clone(),
+                &config,
+                |_, info_map, ip| {
+                    let mut node_info = info_map.clone();
+                    node_info.insert("ip".to_string(), ip.to_string());
+                    data.push(node_info);
+                    ()
+                },
+            );
             Ok(Event::default().data(serde_json::to_string(&data)
                 .expect("Failed to serialize data to JSON")))
         });
     Sse::new(stream)
 }
 
+/* Prometheus Metrics has been abolished. But, the code was left just for reference.
 async fn metrics_handler(
     Path(name): Path<String>,
     State(config): State<AppState>
 ) -> String {
-    let cluster = config.clusters.iter()
-        .find(|c| c.name == name)
-        .expect(&format!("Cluster {} not found", name));
-    let mut con: Connection = setup_redis_client(cluster);
-    let info: String = get_redis_info(&mut con);
-    let info_map: HashMap<String, String> = parse_redis_info(&info);
-    update_gauges_from_info(&info_map);
+    let config = config.clone();
+    let name = name.clone();
+    let mut metrics_info: Vec<HashMap<String, String>> = Vec::new();
+    generics_handler(
+        name,
+        &config,
+        |_, info_map, ip| {
+            update_gauges_from_info(info_map);
+            let mut node_info = info_map.clone();
+            node_info.insert("ip".to_string(), ip.to_string());
+            metrics_info.push(node_info);
+            ()
+        },
+    );
     let encoder = TextEncoder::new();
     let mut buffer = Vec::new();
     encoder.encode(&REGISTRY.gather(), &mut buffer)
@@ -269,6 +292,7 @@ async fn metrics_handler(
     String::from_utf8(buffer)
         .expect("Failed to convert metrics to String")
 }
+*/
 
 async fn index_handler() -> Html<&'static str> {
     Html(ROOT_HTML)
@@ -311,7 +335,7 @@ async fn main() {
         .route("/clusters.json", get(clusters_json_handler))
         .route("/:name", get(named_index_handler))
         .route("/:name/events", get(sse_handler))
-        .route("/:name/metrics", get(metrics_handler))
+        //.route("/:name/metrics", get(metrics_handler))
         .with_state(shared_config);
 
     let addr: SocketAddr = SocketAddr::from(([127, 0, 0, 1], 8080));
