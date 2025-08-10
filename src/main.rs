@@ -14,8 +14,6 @@ use tokio_stream::{wrappers::IntervalStream, StreamExt};
 use redis::{Client, Connection};
 use mellow::{INDEX_HTML, CLUSTER_HTML};
 
-const CONFIG_PATH: &str = "mellow-config.json";
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct RedisInstance {
     ip: String,
@@ -263,10 +261,27 @@ async fn named_index_handler(
 
 #[tokio::main]
 async fn main() {
-    let config_data: String = std::fs::read_to_string(CONFIG_PATH)
-        .expect("Failed to read config file");
+    // Determine config path from first CLI arg (required)
+    let config_path: String = match std::env::args().nth(1) {
+        Some(arg) if arg == "-h" || arg == "--help" => {
+            eprintln!(
+                "Usage:\n  cargo run -- <config.json>\n  mellow <config.json>\n\nExample:\n  cargo run -- mellow-config.json"
+            );
+            std::process::exit(0);
+        }
+        Some(arg) => arg,
+        None => {
+            eprintln!(
+                "Error: missing <config.json> argument.\n\nUsage:\n  cargo run -- <config.json>\n  mellow <config.json>\n\nExample:\n  cargo run -- mellow-config.json"
+            );
+            std::process::exit(2);
+        }
+    };
+
+    let config_data: String = std::fs::read_to_string(&config_path)
+        .unwrap_or_else(|e| panic!("Failed to read config file '{}': {}", config_path, e));
     let redis_config: RedisConfig = serde_json::from_str(&config_data)
-        .expect("Failed to parse config file");
+        .unwrap_or_else(|e| panic!("Failed to parse config file '{}': {}", config_path, e));
     let shared_config: Arc<RedisConfig> = Arc::new(redis_config);
 
     let app: Router = Router::new()
